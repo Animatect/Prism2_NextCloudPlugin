@@ -1,0 +1,567 @@
+import shutil
+import requests
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
+
+
+class MediaVersionPlayer(QWidget):
+    def __init__(self, origin):
+        super(MediaVersionPlayer, self).__init__()
+        self.origin = origin
+        self.core = self.origin.core
+        self.setupUi()
+
+    @err_catcher(name=__name__)
+    def getMediaPreviewMenu(self):
+        contexts = self.getCurRenders()
+        if not contexts or not contexts[0].get("version"):
+            return
+
+        data = contexts[0]
+        path = data["path"]
+
+        if not path:
+            return
+
+        rcmenu = QMenu(self)
+
+        if len(self.seq) > 0 and hasattr(self.core.appPlugin, "importImages"):
+            impAct = QAction("Import images...", self)
+            impAct.triggered.connect(lambda: self.core.appPlugin.importImages(mediaBrowser=self))
+            rcmenu.addAction(impAct)
+
+        if len(self.seq) > 0:
+            if len(self.seq) == 1:
+                path = os.path.join(path, self.seq[0])
+
+            playMenu = QMenu("Play in", self)
+            iconPath = os.path.join(
+                self.core.prismRoot, "Scripts", "UserInterfacesPrism", "play.png"
+            )
+            icon = self.core.media.getColoredIcon(iconPath)
+            playMenu.setIcon(icon)
+
+            if self.mediaPlayerPath is not None:
+                pAct = QAction(self.mediaPlayerName, self)
+                pAct.triggered.connect(self.compare)
+                playMenu.addAction(pAct)
+
+            pAct = QAction("Default", self)
+            pAct.triggered.connect(
+                lambda: self.compare(prog="default")
+            )
+            playMenu.addAction(pAct)
+            rcmenu.addMenu(playMenu)
+
+        if len(self.seq) == 1 or self.prvIsSequence:
+            cvtMenu = QMenu("Convert", self)
+            qtAct = QAction("jpg", self)
+            qtAct.triggered.connect(
+                lambda: self.convertImgs(".jpg")
+            )
+            cvtMenu.addAction(qtAct)
+            qtAct = QAction("png", self)
+            qtAct.triggered.connect(
+                lambda: self.convertImgs(".png")
+            )
+            cvtMenu.addAction(qtAct)
+            qtAct = QAction("mp4", self)
+            qtAct.triggered.connect(
+                lambda: self.convertImgs(".mp4")
+            )
+            cvtMenu.addAction(qtAct)
+
+            settings = OrderedDict()
+            settings["-c"] = "prores"
+            settings["-profile"] = 2
+            settings["-pix_fmt"] = "yuv422p10le"
+
+            movAct = QAction("mov (prores 422)", self)
+            movAct.triggered.connect(
+                lambda x=None, s=settings: self.convertImgs(".mov", settings=s)
+            )
+            cvtMenu.addAction(movAct)
+            rcmenu.addMenu(cvtMenu)
+
+            settings = OrderedDict()
+            settings["-c"] = "prores"
+            settings["-profile"] = 4
+            settings["-pix_fmt"] = "yuva444p10le"
+
+            movAct = QAction("mov (prores 4444)", self)
+            movAct.triggered.connect(
+                lambda x=None, s=settings: self.convertImgs(".mov", settings=s)
+            )
+            cvtMenu.addAction(movAct)
+            rcmenu.addMenu(cvtMenu)
+
+        if (
+            len(self.seq) == 1
+            and os.path.splitext(self.seq[0])[1].lower()
+            in self.core.media.videoFormats
+        ):
+            curSeqIdx = 0
+        else:
+            curSeqIdx = self.getCurrentFrame()
+
+        if len(self.seq) > 0 and self.core.media.getUseThumbnailForFile(self.seq[curSeqIdx]):
+            prvAct = QAction("Use thumbnail", self)
+            prvAct.setCheckable(True)
+            prvAct.setChecked(self.core.media.getUseThumbnails())
+            prvAct.toggled.connect(self.core.media.setUseThumbnails)
+            prvAct.triggered.connect(self.updatePreview)
+            rcmenu.addAction(prvAct)
+
+            if self.core.media.getUseThumbnails():
+                prvAct = QAction("Regenerate thumbnail", self)
+                prvAct.triggered.connect(self.regenerateThumbnail)
+                rcmenu.addAction(prvAct)
+
+        if len(self.seq) > 0 and hasattr(self.origin, "getCurrentEntity"):
+            entity = self.origin.getCurrentEntity()
+            if entity["type"] == "asset":
+                prvAct = QAction("Set as assetpreview", self)
+                prvAct.triggered.connect(self.origin.setPreview)
+                rcmenu.addAction(prvAct)
+
+            elif entity["type"] == "shot":
+                prvAct = QAction("Set as shotpreview", self)
+                prvAct.triggered.connect(self.origin.setPreview)
+                rcmenu.addAction(prvAct)
+
+        act_refresh = QAction("Refresh", self)
+        iconPath = os.path.join(
+            self.core.prismRoot, "Scripts", "UserInterfacesPrism", "refresh.png"
+        )
+        icon = self.core.media.getColoredIcon(iconPath)
+        act_refresh.setIcon(icon)
+        act_refresh.triggered.connect(self.updatePreview)
+        rcmenu.addAction(act_refresh)
+
+        act_disable = QAction("Disabled", self)
+        act_disable.setCheckable(True)
+        act_disable.setChecked(self.state == "disabled")
+        act_disable.triggered.connect(self.onDisabledTriggered)
+        rcmenu.addAction(act_disable)
+
+        exp = QAction("Open in Explorer", self)
+        exp.triggered.connect(lambda: self.core.openFolder(path))
+        rcmenu.addAction(exp)
+
+        nextLinksButton = QAction("Nextcloud Links", self)
+        nextLinksButton.triggered.connect(lambda: self.show_public_links_list(path))
+        rcmenu.addAction(nextLinksButton)
+
+        nextButton = QAction("Compartir por Nextcloud", self)
+        iconPath = os.path.join(
+            self.core.prismRoot, "Scripts", "UserInterfacesPrism", "logo_nextcloud.png"
+        )
+        icon = self.core.media.getColoredIcon(iconPath)
+        nextButton.setIcon(icon)
+        nextButton.triggered.connect(lambda: self.showNextcloudShareMenu(path))  # Copia la ruta del recurso
+        rcmenu.addAction(nextButton)
+
+        copAct = QAction("Copy", self)
+        iconPath = os.path.join(
+            self.core.prismRoot, "Scripts", "UserInterfacesPrism", "copy.png"
+        )
+        icon = self.core.media.getColoredIcon(iconPath)
+        copAct.setIcon(icon)
+        copAct.triggered.connect(lambda: self.core.copyToClipboard(path, file=True))
+        rcmenu.addAction(copAct)
+
+        return rcmenu
+
+    def showNextcloudShareMenu(self, path):
+        # Crear el menú de configuración
+        share_menu = QMenu(self)
+
+        # Almacenar los valores del combobox
+        permisos_combo = None
+        duracion_combo = None
+
+        # Añadir título como primera acción (no clickable)
+        title_action = QWidgetAction(share_menu)
+        title_widget = QLabel("<b>Configuración del link</b>")
+        title_widget.setMargin(5)  # Añadir un poco de espacio
+        title_action.setDisabled(True)  # Hacerlo no clickable
+        title_action.setDefaultWidget(title_widget)
+        share_menu.addAction(title_action)
+        share_menu.addSeparator()
+        
+        def create_option_widget(label_text):
+            nonlocal permisos_combo, duracion_combo
+            widget = QWidgetAction(share_menu)
+            container = QWidget()
+            layout = QHBoxLayout()
+            label = QLabel(label_text)
+
+            # Combo box
+            combo = QComboBox()
+            if label_text == "Permisos":
+                combo.addItems(["solo lectura", "edición"])
+                permisos_combo = combo
+            elif label_text == "Duración del link":
+                combo.addItems(["24 horas", "1 semana"])
+                duracion_combo = combo
+            
+            # Añadir al layout
+            layout.addWidget(label)
+            layout.addWidget(combo)
+            container.setLayout(layout)
+            widget.setDefaultWidget(container)
+            return widget
+    
+        # Añadir opciones al menú
+        share_menu.addAction(create_option_widget("Permisos"))
+        share_menu.addAction(create_option_widget("Duración del link"))
+        share_menu.addSeparator()
+
+        accept_action = QWidgetAction(share_menu)
+        accept_widget = QPushButton("Generar link")
+
+        def on_generate_clicked():
+            # Obtener los valores seleccionados
+            permisos = permisos_combo.currentText() if permisos_combo else "solo lectura"
+            duracion = duracion_combo.currentText() if duracion_combo else "24 horas"
+
+            # Convertir a valores validos para la api de nextcloud
+            permisos_value = "1" if permisos == "solo lectura" else "15"
+
+            if duracion == "24 horas":
+                expire_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            else:
+                expire_date =(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+            self.generar_y_copiar_enlace(path, permisos_value, expire_date)
+            share_menu.close()
+
+        accept_widget.clicked.connect(on_generate_clicked)        
+        
+        accept_action.setDefaultWidget(accept_widget)
+        share_menu.addAction(accept_action)
+
+        # Mostrar el menú en la posición del cursor
+        share_menu.exec_(QCursor.pos())    
+    
+    def generar_y_copiar_enlace(self, path, permissions="1", expire_date=None):
+        try:
+            enlace = self.generar_enlace_nextcloud(path, permissions, expire_date)
+            if enlace:
+                self.core.copyToClipboard(enlace, file=False)
+                self.core.popup(f"Enlace copiado:\n{enlace}")
+            else:
+                self.core.popup("No se pudo generar el enlace. Verifica los logs.")
+        except Exception as e:
+            self.core.popup(f"Error inesperado: {str(e)}")
+            self.core.writeErrorLog("Nextcloud UI Error", str(e))
+
+    def ruta_local_a_ruta_nextcloud(self, path):
+        # Normalizar rutas para comparación segura
+        local_root = os.path.abspath(self.nextcloud_local_root)
+        abs_path = os.path.abspath(path)
+        
+        if not abs_path.startswith(local_root):
+            error_msg = (
+                "Error: La ruta no está dentro del directorio Nextcloud\n"
+                f"Directorio Nextcloud: {local_root}\n"
+                f"Ruta seleccionada: {abs_path}"
+            )
+            self.core.popup(error_msg)
+            return None
+        
+        rel_path = os.path.relpath(abs_path, local_root)
+        nc_path = "/tstProduction/" + rel_path.replace('\\', '/').lstrip('/')
+        return nc_path.replace("//", "/")
+
+    def generar_enlace_nextcloud(self, path, permissions="1", expire_date=None):
+        # Verificar credenciales primero
+        cred_errors = []
+        if not self.nextcloud_url: 
+            cred_errors.append("URL de Nextcloud no configurada")
+        if not self.nextcloud_user: 
+            cred_errors.append("Usuario de Nextcloud no configurado")
+        if not self.nextcloud_password: 
+            cred_errors.append("Contraseña de Nextcloud no configurada")
+        
+        if cred_errors:
+            error_msg = "Configuración incompleta:\n" + "\n".join(cred_errors)
+            self.core.popup(error_msg)
+            return None 
+
+        # Verificar si el path es válido
+        if not path or not os.path.exists(path):
+            self.core.popup(f"Ruta inválida o no existe:\n{path}")
+            return None
+
+        try:
+            nc_path = self.ruta_local_a_ruta_nextcloud(path)
+            if not nc_path:
+                return None
+
+        except Exception as e:
+            self.core.popup(f"Error al convertir ruta:\n{str(e)}")
+            self.core.writeErrorLog("Nextcloud Path Conversion", str(e))
+            return None
+        
+        # Verificar shares existentes para este recurso
+        existing_share = self._get_existing_share(nc_path, permissions, expire_date)
+        if existing_share:
+            return existing_share
+        
+        return self._create_new_share(nc_path, permissions, expire_date)
+        
+    def _get_existing_share(self, nc_path, desired_permissions, desired_expire_date=None):    
+        # Busca shares existentes que coincidan con los parámetros deseados
+        endpoint = f"{self.nextcloud_url.rstrip('/')}/ocs/v2.php/apps/files_sharing/api/v1/shares?path={nc_path}&reshares=true"
+        headers = {
+            "OCS-APIRequest": "true",
+            "Accept": "application/json"
+        }
+
+        try:
+            # Enviar solicitud
+            response = requests.get(
+                endpoint,
+                headers=headers,
+                auth=(self.nextcloud_user, self.nextcloud_password),
+                timeout=20
+            )
+
+            # 6. Procesar respuesta
+            if response.status_code != 200:
+                return None
+            
+            shares = response.json().get('ocs', {}).get('data', [])
+            public_shares = [s for s in shares if str(s.get('share_type')) == '3']
+            
+            for share in public_shares:
+                # Comparar permisos
+                current_permissions = str(share.get('permissions', 0))
+                if desired_permissions == "1":
+                    if not (current_permissions & 1):
+                        continue
+                    if not (current_permissions & 2) or (current_permissions & 4) or (current_permissions & 8):
+                        continue
+                elif desired_permissions == "15":
+                    if not (current_permissions & 1):
+                        continue
+                    if not (current_permissions & 2):
+                        continue
+                # Comparar fechas
+                if desired_expire_date:
+                    current_expire = share.get('expiration', '')
+                    if current_expire and current_expire != desired_expire_date:
+                        continue
+                # Si el share coincide
+                return share.get('url', '')
+            
+        except Exception as e:
+            self.core.writeErrorLog("Error checking existing shares", str(e))
+        
+        return None
+    
+    def _create_new_share(self, nc_path, permissions, expire_date=None):
+        # Crear nuevo share
+        endpoint = f"{self.nextcloud_url.rstrip('/')}/ocs/v2.php/apps/files_sharing/api/v1/shares"
+        headers = {
+            "OCS-APIRequest": "true",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+        }
+        data = {
+            "path": nc_path,
+            "shareType": "3",  # Enlace público
+            "permissions": permissions
+        }
+        
+        if expire_date:
+            data["expireDate"] = expire_date
+
+        try:
+            response = requests.post(
+                endpoint,
+                headers=headers,
+                data=data,
+                auth=(self.nextcloud_user, self.nextcloud_password),
+                timeout=20
+            )
+
+            if response.status_code != 200:
+                error_msg = (f"Error en la API (HTTP {response.status_code}):\n"
+                            f"Respuesta: {response.text[:200]}{'...' if len(response.text) > 200 else ''}")
+                self.core.writeErrorLog("Nextcloud API Error", error_msg)
+                self.core.popup(error_msg)
+                return None
+            
+            try:
+                json_data = response.json()
+                url = json_data.get('ocs', {}).get('data', {}).get('url', '')
+                if url:
+                    return url
+            
+            except ValueError:
+                root = ET.fromstring(response.content)
+                url_element = root.find('.//ns:url', namespaces) or root.find('.//url')
+                if url_element is not None and url_element.text:
+                    return url_element.text
+                
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Error de conexión: {str(e)}"
+            self.core.popup(error_msg)
+            self.core.writeErrorLog("Connection Error", error_msg)
+        except ET.ParseError:
+            error_msg = "Error al analizar respuesta XML"
+            self.core.popup(error_msg)
+            self.core.writeErrorLog("XML Parse Error", error_msg)
+        except Exception as e:
+            error_msg = f"Error inesperado: {str(e)}"
+            self.core.popup(error_msg)
+            self.core.writeErrorLog("Unexpected Error", error_msg)
+            
+        self.core.popup("No se pudo extraer el enlace de la respuesta")
+        return None
+    
+    def show_public_links_list(self, path):
+        """Muestra diálogo con todos los enlaces públicos del recurso"""
+        #self.core.popup("Iniciando show_public_links_list...")
+        
+        try:
+            # Verificación 1: Comprobar si el path existe
+            if not path or not os.path.exists(path):
+                #self.core.popup("Error: La ruta local no existe\n\nPath recibido: " + str(path))
+                return
+            
+            #self.core.popup("Convirtiendo ruta local a ruta Nextcloud...")
+            nc_path = self.ruta_local_a_ruta_nextcloud(path)
+            if not nc_path:
+                #self.core.popup("Error: La ruta no está en el directorio Nextcloud\n\nRuta local: " + path)
+                return
+            #self.core.popup(f"Ruta Nextcloud obtenida:\n{nc_path}")
+            
+            # Verificación 2: Obtener shares públicos
+            #self.core.popup("Obteniendo shares públicos desde Nextcloud...")
+            all_public_shares = self._get_all_public_shares(nc_path)
+            
+            if not all_public_shares:
+                self.core.popup("Info: No hay enlaces públicos para este recurso")
+                return
+            
+            # Verificación 3: Creación del diálogo
+            #self.core.popup("Creando interfaz gráfica...")
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Enlaces Públicos Existentes")
+            dialog.setMinimumWidth(600)
+            
+            layout = QVBoxLayout()
+            
+            # Creación de tabla
+            #self.core.popup("Configurando tabla de resultados...")
+            table = QTableWidget(0, 3)
+            table.setHorizontalHeaderLabels(["Enlace", "Permisos", "Expiración"])
+            table.verticalHeader().setVisible(False)
+            table.setEditTriggers(QTableWidget.NoEditTriggers)
+            
+            # Llenado de tabla
+            #self.core.popup(f"Mostrando {len(all_public_shares)} enlaces...")
+            for share in all_public_shares:
+                row = table.rowCount()
+                table.insertRow(row)
+                
+                url = share.get('url', '')
+                permissions = 'Lectura' if share.get('permissions') == 1 else 'Lectura/Escritura'
+                expiration = share.get('expiration', 'No expira')
+                
+                table.setItem(row, 0, QTableWidgetItem(url))
+                table.setItem(row, 1, QTableWidgetItem(permissions))
+                table.setItem(row, 2, QTableWidgetItem(expiration))
+            
+            table.resizeColumnsToContents()
+            
+            # Botón para copiar
+            btn_copy = QPushButton("Copiar seleccionado")
+            btn_copy.clicked.connect(lambda: self._copy_from_table(table))
+            
+            # Organizar layout
+            layout.addWidget(table)
+            layout.addWidget(btn_copy)
+            dialog.setLayout(layout)
+            
+            #self.core.popup("Mostrando diálogo...")
+            dialog.exec_()
+            #self.core.popup("Diálogo cerrado")
+            
+        except Exception as e:
+            error_msg = f"Error crítico:\n{str(e)}"
+            self.core.popup(error_msg)
+            self.core.writeErrorLog("Error en show_public_links_list", str(e))
+
+    def _get_all_public_shares(self, nc_path):
+        """Obtiene todos los shares públicos existentes para un recurso"""
+        #self.core.popup(f"Buscando shares públicos para:\n{nc_path}")
+        
+        endpoint = f"{self.nextcloud_url.rstrip('/')}/ocs/v2.php/apps/files_sharing/api/v1/shares?path={nc_path}&reshares=true"
+        headers = {
+            "OCS-APIRequest": "true",
+            "Accept": "application/json"
+        }
+
+        try:
+            #self.core.popup("Conectando con Nextcloud...")
+            response = requests.get(
+                endpoint,
+                headers=headers,
+                auth=(self.nextcloud_user, self.nextcloud_password),
+                timeout=20
+            )
+
+            #self.core.popup(f"Respuesta recibida - Código: {response.status_code}")
+            
+            if response.status_code != 200:
+                error_msg = f"Error en la API (HTTP {response.status_code}):\n{response.text[:200]}"
+                self.core.popup(error_msg)
+                return []
+            
+            shares = response.json().get('ocs', {}).get('data', [])
+            #self.core.popup(f"Total shares encontrados: {len(shares)}")
+            
+            # Filtrar solo shares públicos (tipo 3) con permisos 1 o 15
+            public_shares = []
+            for share in shares:
+                share_type = str(share.get('share_type', ''))
+                permissions = str(share.get('permissions', ''))
+                
+                #self.core.popup(f"Analizando share:\nTipo: {share_type}\nPermisos: {permissions}")
+                
+                if share_type == '3' and permissions in ['1', '17']:
+                    public_shares.append({
+                        'url': share.get('url', ''),
+                        'permissions': permissions,
+                        'expiration': share.get('expiration', 'No expira'),
+                        'id': share.get('id', '')
+                    })
+            
+            #self.core.popup(f"Shares públicos encontrados: {len(public_shares)}")
+            return public_shares
+            
+        except Exception as e:
+            error_msg = f"Error al obtener shares:\n{str(e)}"
+            self.core.popup(error_msg)
+            self.core.writeErrorLog("Error getting public shares", str(e))
+            return []
+
+    def _copy_from_table(self, table):
+        """Copia el enlace seleccionado con verificación"""
+        selected = table.selectedItems()
+        
+        if not selected:
+            self.core.popup("Error: No hay nada seleccionado")
+            return
+        
+        url = selected[0].text()
+        if not url:
+            self.core.popup("Error: El enlace está vacío")
+            return
+        
+        self.core.copyToClipboard(url, file=False)
+        self.core.popup(f"Enlace copiado:\n{url}")
