@@ -39,6 +39,7 @@ import os
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
+import json
 
 from PrismUtils.Decorators import err_catcher_plugin as err_catcher
 
@@ -48,15 +49,10 @@ class Prism_NextCloudLinks_Functions(object):
         self.core = core
         self.plugin = plugin
         self.core.popup("Custom code executed successfully!")
+        self.core.registerCallback("userSettings_loadUI", self.userSettings_Nextcloud, plugin=self)
         self.core.callbacks.registerCallback("openPBListContextMenu", self.nextButton, plugin=self)
         self.core.callbacks.registerCallback("mediaPlayerContextMenuRequested", self.nextButtonPreview, plugin=self)
-
-        # Configuración de Nextcloud
-        self.nextcloud_url = "https://magicbox.cgnovachat.info/" 
-        self.nextcloud_user = "PrismBot"
-        self.nextcloud_password = "BluePrism#Magic"
-        self.nextcloud_local_root = r"Z:\PROYECTOS\AC_MH\tstProduction"
-        self.nextcloud_remote_root = "/tstProduction"
+        self.nextcloud_user, self.nextcloud_password, self.nextcloud_url = self.load_nextcloud_credentials()
 
     def nextButton(self, origin, rcmenu, lw, item, path):
         nextcloudButton = QAction("Compartir por Nextcloud", origin)
@@ -97,11 +93,11 @@ class Prism_NextCloudLinks_Functions(object):
         
         icon = self.core.media.getColoredIcon(iconPath)
         nextcloudButtonPreview.setIcon(icon)
-        nextcloudButtonPreview.triggered.connect(lambda: self.mi_funcion(path))
+        nextcloudButtonPreview.triggered.connect(lambda: self.showNextcloudShareMenu(path))
         menu.addAction(nextcloudButtonPreview)
 
         nextcloudLinkListPreview = QAction("Links generados", origin)
-        nextcloudLinkListPreview.triggered.connect(lambda: self.mi_funcion(path))
+        nextcloudLinkListPreview.triggered.connect(lambda: self.show_public_links_list(path))
         menu.addAction(nextcloudLinkListPreview)
      
     def mi_funcion(self, path):
@@ -109,8 +105,6 @@ class Prism_NextCloudLinks_Functions(object):
         print(f"url: {self.nextcloud_url}")
         print(f"user: {self.nextcloud_user}")
         print(f"contraseña: {self.nextcloud_password}")
-        print(f"local root: {self.nextcloud_local_root}")
-        print(f"remote root: {self.nextcloud_remote_root}")
 
     def mi_funcion2(self, context):
         print(f"Acción ejecutada desde: {context}")
@@ -483,6 +477,104 @@ class Prism_NextCloudLinks_Functions(object):
         
         self.core.copyToClipboard(url, file=False)
         self.core.popup(f"Enlace copiado:\n{url}")
+
+    # Para añadir a settings
+    def userSettings_Nextcloud(self, origin):
+        origin.w_nextcloud = QWidget()
+        origin.lo_nextcloud = QVBoxLayout(origin.w_nextcloud)
+        origin.gb_credentials = QGroupBox("Nextcloud Credentials")
+        origin.lo_credentials = QFormLayout(origin.gb_credentials)
+        
+        # Campo para nombre de usuario
+        origin.le_username = QLineEdit()
+        origin.le_username.setPlaceholderText("Enter your Nextcloud username")
+        origin.lo_credentials.addRow("Username:", origin.le_username)
+        
+        # Campo para contraseña
+        origin.le_password = QLineEdit()
+        origin.le_password.setPlaceholderText("Enter your Nextcloud password")
+        origin.le_password.setEchoMode(QLineEdit.Password)  # Oculta los caracteres
+        origin.lo_credentials.addRow("Password:", origin.le_password)
+        
+        # Campo para url de nextcloud
+        origin.le_url = QLineEdit()
+        origin.le_url.setPlaceholderText("Enter the url to nextcloud")
+        origin.lo_credentials.addRow("URL:", origin.le_url)
+        
+        # Botón para guardar credenciales
+        origin.btn_save = QPushButton("Save Credentials")
+        origin.btn_save.clicked.connect(lambda: self.save_nextcloud_credentials(
+            origin.le_username.text(),
+            origin.le_password.text(),
+            origin.le_url.text()
+        ))
+        
+        origin.lo_nextcloud.addWidget(origin.gb_credentials)
+        origin.lo_nextcloud.addWidget(origin.btn_save)
+        sp_stretch = QSpacerItem(0, 0, QSizePolicy.Fixed, QSizePolicy.Expanding)
+        origin.lo_nextcloud.addItem(sp_stretch)
+        
+        # Añadir la pestaña a los ajustes de usuario
+        origin.addTab(origin.w_nextcloud, "Nextcloud")
+
+        # Cargar credenciales guardadas
+        username, password, url = self.load_nextcloud_credentials()
+        origin.le_username.setText(username)
+        origin.le_password.setText(password)
+        origin.le_url.setText(url)
+
+        pass
+
+    def save_nextcloud_credentials(self, username, password, url):
+        if not all([username, password, url]):
+            self.core.popup("Error: The url, username and password cannot be empty")
+            return
+        
+        try:
+            # Determinar la ruta del archivo JSON
+            config_dir = os.path.dirname(os.path.abspath(__file__))
+            os.makedirs(config_dir, exist_ok=True)
+            config_file = os.path.join(config_dir, "nextcloud_credentials.json")
+            
+            # Definir la estructura de datos a guardar
+            credentials = {
+                "nextcloud_username": username,
+                "nextcloud_password": password,
+                "nextcloud_url": url
+            }
+
+            # Guardar en archivo JSON
+            with open(config_file, 'w') as f:
+                json.dump(credentials, f, indent=4)
+            print("Credentials saved successfully!")
+            
+            # Actualizar la configuración actual
+            self.nextcloud_user = username
+            self.nextcloud_password = password
+            self.nextcloud_url = url
+            
+            self.core.popup("Credentials saved successfully in JSON file!")
+        except Exception as e:
+            self.core.popup(f"Error saving credentials: {str(e)}")
+
+    def load_nextcloud_credentials(self):
+        #Función para cargar las credenciales desde el archivo json"
+        try:
+            config_dir = os.path.dirname(os.path.abspath(__file__))
+            config_file = os.path.join(config_dir, "nextcloud_credentials.json")
+            
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    credentials = json.load(f)
+                    return (
+                        credentials.get("nextcloud_username", ""),
+                        credentials.get("nextcloud_password", ""),
+                        credentials.get("nextcloud_url", "")
+                    )
+        except Exception as e:
+            print(f"Error loading credentials: {str(e)}")
+        
+        return ("", "", "")
 
     # if returns true, the plugin will be loaded by Prism
     @err_catcher(name=__name__)
