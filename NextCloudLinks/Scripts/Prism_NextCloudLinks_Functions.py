@@ -48,11 +48,27 @@ class Prism_NextCloudLinks_Functions(object):
     def __init__(self, core, plugin):
         self.core = core
         self.plugin = plugin
-        self.core.popup("Custom code executed successfully!")
         self.core.registerCallback("userSettings_loadUI", self.userSettings_Nextcloud, plugin=self)
         self.core.callbacks.registerCallback("openPBListContextMenu", self.nextButton, plugin=self)
         self.core.callbacks.registerCallback("mediaPlayerContextMenuRequested", self.nextButtonPreview, plugin=self)
         self.nextcloud_user, self.nextcloud_password, self.nextcloud_url = self.load_nextcloud_credentials()
+
+    def get_remote_root(self):
+        project_path = self.core.projectPath
+        if not project_path:
+            return "/PROYECTOS"
+        
+        project_path = os.path.abspath(project_path)
+        parts = project_path.split(os.sep)
+        parts_lower = [p.lower() for p in parts]
+        
+        if "proyectos" in parts_lower:
+            idx = parts_lower.index("proyectos")
+            relative_project_path = os.sep.join(parts[idx+1:])
+            return "/PROYECTOS/" + relative_project_path.replace(os.sep, '/')
+        else:
+            project_name = os.path.basename(project_path)
+            return "/PROYECTOS/" + project_name
 
     def nextButton(self, origin, rcmenu, lw, item, path):
         nextcloudButton = QAction("Compartir por Nextcloud", origin)
@@ -82,7 +98,7 @@ class Prism_NextCloudLinks_Functions(object):
         if hasattr(origin, "seq") and len(origin.seq) == 1:
             path = os.path.join(path, origin.seq[0])
         
-        nextcloudButtonPreview = QAction("Acción de ejemplo2", origin)
+        nextcloudButtonPreview = QAction("Compartir por Nextcloud", origin)
         iconPath = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "Icons",
@@ -99,15 +115,6 @@ class Prism_NextCloudLinks_Functions(object):
         nextcloudLinkListPreview = QAction("Links generados", origin)
         nextcloudLinkListPreview.triggered.connect(lambda: self.show_public_links_list(path))
         menu.addAction(nextcloudLinkListPreview)
-     
-    def mi_funcion(self, path):
-        print(f"Acción ejecutada para: {path}")
-        print(f"url: {self.nextcloud_url}")
-        print(f"user: {self.nextcloud_user}")
-        print(f"contraseña: {self.nextcloud_password}")
-
-    def mi_funcion2(self, context):
-        print(f"Acción ejecutada desde: {context}")
 
     def showNextcloudShareMenu(self, path):
         # Crear el menú de configuración
@@ -187,28 +194,28 @@ class Prism_NextCloudLinks_Functions(object):
             if enlace:
                 self.core.copyToClipboard(enlace, file=False)
                 self.core.popup(f"Enlace copiado:\n{enlace}")
-            else:
-                self.core.popup("No se pudo generar el enlace. Verifica los logs.")
         except Exception as e:
             self.core.popup(f"Error inesperado: {str(e)}")
             self.core.writeErrorLog("Nextcloud UI Error", str(e))
 
     def ruta_local_a_ruta_nextcloud(self, path):
         # Normalizar rutas para comparación segura
-        local_root = os.path.abspath(self.nextcloud_local_root)
+        project_path = self.core.projectPath
+        project_path = os.path.abspath(project_path)
         abs_path = os.path.abspath(path)
         
-        if not abs_path.startswith(local_root):
+        if not abs_path.startswith(project_path):
             error_msg = (
                 "Error: La ruta no está dentro del directorio Nextcloud\n"
-                f"Directorio Nextcloud: {local_root}\n"
+                f"Directorio Nextcloud: {project_path}\n"
                 f"Ruta seleccionada: {abs_path}"
             )
             self.core.popup(error_msg)
             return None
         
-        rel_path = os.path.relpath(abs_path, local_root)
-        nc_path = "/tstProduction/" + rel_path.replace('\\', '/').lstrip('/')
+        nextcloud_remote_root = self.get_remote_root()
+        rel_path = os.path.relpath(abs_path, project_path)
+        nc_path = nextcloud_remote_root + "/" + rel_path.replace('\\', '/').lstrip('/')
         return nc_path.replace("//", "/")
 
     def generar_enlace_nextcloud(self, path, permissions="1", expire_date=None):
@@ -238,7 +245,6 @@ class Prism_NextCloudLinks_Functions(object):
 
         except Exception as e:
             self.core.popup(f"Error al convertir ruta:\n{str(e)}")
-            self.core.writeErrorLog("Nextcloud Path Conversion", str(e))
             return None
         
         # Verificar shares existentes para este recurso
@@ -374,7 +380,7 @@ class Prism_NextCloudLinks_Functions(object):
             all_public_shares = self._get_all_public_shares(nc_path)
             
             if not all_public_shares:
-                self.core.popup("Info: No hay enlaces públicos para este recurso")
+
                 return
 
             dialog = QDialog()
@@ -467,12 +473,12 @@ class Prism_NextCloudLinks_Functions(object):
         selected = table.selectedItems()
         
         if not selected:
-            self.core.popup("Error: No hay nada seleccionado")
+
             return
         
         url = selected[0].text()
         if not url:
-            self.core.popup("Error: El enlace está vacío")
+        
             return
         
         self.core.copyToClipboard(url, file=False)
