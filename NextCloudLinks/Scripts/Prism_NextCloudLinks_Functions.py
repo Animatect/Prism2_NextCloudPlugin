@@ -256,7 +256,13 @@ class Prism_NextCloudLinks_Functions(object):
         
     def _get_existing_share(self, nc_path, desired_permissions, desired_expire_date=None):    
         # Busca shares existentes que coincidan con los parámetros deseados
-        endpoint = f"{self.nextcloud_url.rstrip('/')}/ocs/v2.php/apps/files_sharing/api/v1/shares?path={nc_path}&reshares=true"
+        try:
+            import urllib.parse
+            encoded_path = urllib.parse.quote(nc_path)
+        except:
+            encoded_path = nc_path
+        
+        endpoint = f"{self.nextcloud_url.rstrip('/')}/ocs/v2.php/apps/files_sharing/api/v1/shares?path={encoded_path}&reshares=true"
         headers = {
             "OCS-APIRequest": "true",
             "Accept": "application/json"
@@ -275,27 +281,48 @@ class Prism_NextCloudLinks_Functions(object):
             if response.status_code != 200:
                 return None
             
-            shares = response.json().get('ocs', {}).get('data', [])
+            try:
+                data = response.json()
+                shares = data.get('ocs', {}).get('data', [])
+            except ValueError:
+                # Si falla el JSON, intentar parsear como XML
+                try:
+                    root = ET.fromstring(response.content)
+                    shares = []
+                    for element in root.findall('.//element'):
+                        share_data = {}
+                        for child in element:
+                            if child.tag == 'id':
+                                share_data['id'] = child.text
+                            elif child.tag == 'share_type':
+                                share_data['share_type'] = child.text
+                            elif child.tag == 'permissions':
+                                share_data['permissions'] = child.text
+                            elif child.tag == 'url':
+                                share_data['url'] = child.text
+                            elif child.tag == 'expiration':
+                                share_data['expiration'] = child.text
+                        shares.append(share_data)
+                except ET.ParseError:
+                    self.core.writeErrorLog("Nextcloud API Response Parse Error", "Could not parse response as JSON or XML")
+                    return None
+
             public_shares = [s for s in shares if str(s.get('share_type')) == '3']
             
             for share in public_shares:
                 # Comparar permisos
                 current_permissions = str(share.get('permissions', 0))
-                if desired_permissions == "1":
-                    if not (current_permissions & 1):
+                if desired_permissions == "1":  # Solo lectura
+                    if current_permissions not in ["1", "17"]:  # 17 es lectura + compartir
                         continue
-                    if not (current_permissions & 2) or (current_permissions & 4) or (current_permissions & 8):
+                elif desired_permissions == "15":  # Edición
+                    if current_permissions not in ["15", "31"]:  # 31 es todos los permisos
                         continue
-                elif desired_permissions == "15":
-                    if not (current_permissions & 1):
-                        continue
-                    if not (current_permissions & 2):
-                        continue
-                # Comparar fechas
-                if desired_expire_date:
-                    current_expire = share.get('expiration', '')
-                    if current_expire and current_expire != desired_expire_date:
-                        continue
+                    # Comparar fechas
+                    if desired_expire_date:
+                        current_expire = share.get('expiration', '')
+                        if current_expire and current_expire != desired_expire_date:
+                            continue
                 # Si el share coincide
                 return share.get('url', '')
             
