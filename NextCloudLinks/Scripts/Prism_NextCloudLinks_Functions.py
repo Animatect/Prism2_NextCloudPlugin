@@ -53,6 +53,13 @@ class Prism_NextCloudLinks_Functions(object):
         self.core.callbacks.registerCallback("mediaPlayerContextMenuRequested", self.nextButtonPreview, plugin=self)
         self.nextcloud_user, self.nextcloud_password, self.nextcloud_url = self.load_nextcloud_credentials()
 
+    def showInfoMessage(self, message):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText(message)
+        msg.setWindowTitle("Prism")
+        msg.exec_()
+
     def get_remote_root(self):
         project_path = self.core.projectPath
         if not project_path:
@@ -78,7 +85,7 @@ class Prism_NextCloudLinks_Functions(object):
             "logo_nextcloud.png"
         )
         if not os.path.exists(iconPath):
-            self.core.popup(f"Icono no encontrado en: {iconPath}")
+            self.showInfoMessage(f"Icono no encontrado en: {iconPath}")
         
         icon = self.core.media.getColoredIcon(iconPath)
         nextcloudButton.setIcon(icon)
@@ -105,7 +112,7 @@ class Prism_NextCloudLinks_Functions(object):
             "logo_nextcloud.png"
         )
         if not os.path.exists(iconPath):
-            self.core.popup(f"Icono no encontrado en: {iconPath}")
+            self.showInfoMessage(f"Icono no encontrado en: {iconPath}")
         
         icon = self.core.media.getColoredIcon(iconPath)
         nextcloudButtonPreview.setIcon(icon)
@@ -193,10 +200,10 @@ class Prism_NextCloudLinks_Functions(object):
             enlace = self.generar_enlace_nextcloud(path, permissions, expire_date)
             if enlace:
                 self.core.copyToClipboard(enlace, file=False)
-                self.core.popup(f"Enlace copiado:\n{enlace}")
+                self.showInfoMessage(f"Enlace copiado:\n{enlace}")
         except Exception as e:
-            self.core.popup(f"Error inesperado: {str(e)}")
-            self.core.writeErrorLog("Nextcloud UI Error", str(e))
+            self.showInfoMessage(f"Error inesperado: {str(e)}")
+            self.showInfoMessage("Nextcloud UI Error", str(e))
 
     def ruta_local_a_ruta_nextcloud(self, path):
         # Normalizar rutas para comparación segura
@@ -210,7 +217,7 @@ class Prism_NextCloudLinks_Functions(object):
                 f"Directorio Nextcloud: {project_path}\n"
                 f"Ruta seleccionada: {abs_path}"
             )
-            self.core.popup(error_msg)
+            self.showInfoMessage(error_msg)
             return None
         
         nextcloud_remote_root = self.get_remote_root()
@@ -230,12 +237,12 @@ class Prism_NextCloudLinks_Functions(object):
         
         if cred_errors:
             error_msg = "Configuración incompleta:\n" + "\n".join(cred_errors)
-            self.core.popup(error_msg)
+            self.showInfoMessage(error_msg)
             return None 
 
         # Verificar si el path es válido
         if not path or not os.path.exists(path):
-            self.core.popup(f"Ruta inválida o no existe:\n{path}")
+            self.showInfoMessage(f"Ruta inválida o no existe:\n{path}")
             return None
 
         try:
@@ -244,7 +251,7 @@ class Prism_NextCloudLinks_Functions(object):
                 return None
 
         except Exception as e:
-            self.core.popup(f"Error al convertir ruta:\n{str(e)}")
+            self.showInfoMessage(f"Error al convertir ruta:\n{str(e)}")
             return None
         
         # Verificar shares existentes para este recurso
@@ -361,7 +368,7 @@ class Prism_NextCloudLinks_Functions(object):
                 error_msg = (f"Error en la API (HTTP {response.status_code}):\n"
                             f"Respuesta: {response.text[:200]}{'...' if len(response.text) > 200 else ''}")
                 self.core.writeErrorLog("Nextcloud API Error", error_msg)
-                self.core.popup(error_msg)
+                self.showInfoMessage(error_msg)
                 return None
             
             try:
@@ -378,18 +385,18 @@ class Prism_NextCloudLinks_Functions(object):
                 
         except requests.exceptions.RequestException as e:
             error_msg = f"Error de conexión: {str(e)}"
-            self.core.popup(error_msg)
+            self.showInfoMessage(error_msg)
             self.core.writeErrorLog("Connection Error", error_msg)
         except ET.ParseError:
             error_msg = "Error al analizar respuesta XML"
-            self.core.popup(error_msg)
+            self.showInfoMessage(error_msg)
             self.core.writeErrorLog("XML Parse Error", error_msg)
         except Exception as e:
             error_msg = f"Error inesperado: {str(e)}"
-            self.core.popup(error_msg)
+            self.showInfoMessage(error_msg)
             self.core.writeErrorLog("Unexpected Error", error_msg)
             
-        self.core.popup("No se pudo extraer el enlace de la respuesta")
+        self.showInfoMessage("No se pudo extraer el enlace de la respuesta")
         return None    
 
     # Mostrar los links ya generados 
@@ -449,7 +456,7 @@ class Prism_NextCloudLinks_Functions(object):
             
         except Exception as e:
             error_msg = f"Error crítico:\n{str(e)}"
-            self.core.popup(error_msg)
+            self.showInfoMessage(error_msg)
             self.core.writeErrorLog("Error en show_public_links_list", str(e))
 
     def _get_all_public_shares(self, nc_path):
@@ -470,7 +477,7 @@ class Prism_NextCloudLinks_Functions(object):
             
             if response.status_code != 200:
                 error_msg = f"Error en la API (HTTP {response.status_code}):\n{response.text[:200]}"
-                self.core.popup(error_msg)
+                self.showInfoMessage(error_msg)
                 return []
             
             shares = response.json().get('ocs', {}).get('data', [])
@@ -491,7 +498,7 @@ class Prism_NextCloudLinks_Functions(object):
             
         except Exception as e:
             error_msg = f"Error al obtener shares:\n{str(e)}"
-            self.core.popup(error_msg)
+            self.showInfoMessage(error_msg)
             self.core.writeErrorLog("Error getting public shares", str(e))
             return []
 
@@ -509,7 +516,7 @@ class Prism_NextCloudLinks_Functions(object):
             return
         
         self.core.copyToClipboard(url, file=False)
-        self.core.popup(f"Enlace copiado:\n{url}")
+        self.showInfoMessage(f"Enlace copiado:\n{url}")
 
     # Para añadir a settings
     def userSettings_Nextcloud(self, origin):
@@ -560,7 +567,7 @@ class Prism_NextCloudLinks_Functions(object):
 
     def save_nextcloud_credentials(self, username, password, url):
         if not all([username, password, url]):
-            self.core.popup("Error: The url, username and password cannot be empty")
+            self.showInfoMessage("Error: The url, username and password cannot be empty")
             return
         
         try:
@@ -586,9 +593,9 @@ class Prism_NextCloudLinks_Functions(object):
             self.nextcloud_password = password
             self.nextcloud_url = url
             
-            self.core.popup("Credentials saved successfully in JSON file!")
+            self.showInfoMessage("Credentials saved successfully in JSON file!")
         except Exception as e:
-            self.core.popup(f"Error saving credentials: {str(e)}")
+            self.showInfoMessage(f"Error saving credentials: {str(e)}")
 
     def load_nextcloud_credentials(self):
         #Función para cargar las credenciales desde el archivo json"
