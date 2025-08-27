@@ -153,7 +153,7 @@ class Prism_NextCloudLinks_Functions(object):
                 combo.addItems(["solo lectura", "edición"])
                 permisos_combo = combo
             elif label_text == "Duración del link":
-                combo.addItems(["24 horas", "1 semana"])
+                combo.addItems(["1 mes", "6 meses", "Siempre"])
                 duracion_combo = combo
             
             # Añadir al layout
@@ -174,15 +174,19 @@ class Prism_NextCloudLinks_Functions(object):
         def on_generate_clicked():
             # Obtener los valores seleccionados
             permisos = permisos_combo.currentText() if permisos_combo else "solo lectura"
-            duracion = duracion_combo.currentText() if duracion_combo else "24 horas"
+            duracion = duracion_combo.currentText() if duracion_combo else "1 mes"
 
             # Convertir a valores validos para la api de nextcloud
             permisos_value = "1" if permisos == "solo lectura" else "15"
 
-            if duracion == "24 horas":
-                expire_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            if duracion == "1 mes":
+                expire_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
+            elif duracion == "6 meses":
+                expire_date = (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d")
+            elif duracion == "Siempre":
+                expire_date = None
             else:
-                expire_date =(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+                expire_date =(datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
 
             self.generar_y_copiar_enlace(path, permisos_value, expire_date)
             share_menu.close()
@@ -319,18 +323,17 @@ class Prism_NextCloudLinks_Functions(object):
             for share in public_shares:
                 # Comparar permisos
                 current_permissions = str(share.get('permissions', 0))
-                if desired_permissions == "1":  # Solo lectura
-                    if current_permissions not in ["1", "17"]:  # 17 es lectura + compartir
+                if current_permissions != desired_permissions:  # 17 es lectura + compartir
+                    continue
+                current_expire = share.get('expiration', '')
+                if desired_expire_date is None:
+                    if current_expire:
                         continue
-                elif desired_permissions == "15":  # Edición
-                    if current_permissions not in ["15", "31"]:  # 31 es todos los permisos
+                else:
+                    if not current_expire:
                         continue
-                    # Comparar fechas
-                    if desired_expire_date:
-                        current_expire = share.get('expiration', '')
-                        if current_expire and current_expire != desired_expire_date:
-                            continue
-                # Si el share coincide
+                    if not current_expire.startswith(desired_expire_date):
+                        continue
                 return share.get('url', '')
             
         except Exception as e:
@@ -396,7 +399,7 @@ class Prism_NextCloudLinks_Functions(object):
             self.showInfoMessage(error_msg)
             self.core.writeErrorLog("Unexpected Error", error_msg)
             
-        self.showInfoMessage("No se pudo extraer el enlace de la respuesta")
+        self.showInfoMessage(f"No se pudo extraer el enlace de la respuesta")
         return None    
 
     # Mostrar los links ya generados 
@@ -414,7 +417,7 @@ class Prism_NextCloudLinks_Functions(object):
             all_public_shares = self._get_all_public_shares(nc_path)
             
             if not all_public_shares:
-
+                self.showInfoMessage(f"Info: No hay enlaces públicos para este recurso")
                 return
 
             dialog = QDialog()
@@ -435,11 +438,17 @@ class Prism_NextCloudLinks_Functions(object):
                 table.insertRow(row)
                 
                 url = share.get('url', '')
-                permissions = 'Lectura' if share.get('permissions') == 1 else 'Lectura/Escritura'
+                permissions_value = share.get('permissions', '')
+                if permissions_value in ['1', '17']:
+                    permissions_text = 'Lectura'
+                elif permissions_value in ['15', '31']:
+                    permissions_text = 'Lectura/Escritura'
+                else:
+                    permissions_text = f'Desconocido ({permissions_value})'
                 expiration = share.get('expiration', 'No expira')
                 
                 table.setItem(row, 0, QTableWidgetItem(url))
-                table.setItem(row, 1, QTableWidgetItem(permissions))
+                table.setItem(row, 1, QTableWidgetItem(permissions_text))
                 table.setItem(row, 2, QTableWidgetItem(expiration))
             
             table.resizeColumnsToContents()
@@ -486,11 +495,15 @@ class Prism_NextCloudLinks_Functions(object):
                 share_type = str(share.get('share_type', ''))
                 permissions = str(share.get('permissions', ''))
                 
-                if share_type == '3' and permissions in ['1', '17']:
+                if share_type == '3':
+                    expiration = share.get('expiration', '')
+                    if not expiration:
+                        expiration = 'Sin duración limite'
+
                     public_shares.append({
                         'url': share.get('url', ''),
                         'permissions': permissions,
-                        'expiration': share.get('expiration', 'No expira'),
+                        'expiration': expiration,
                         'id': share.get('id', '')
                     })
             
