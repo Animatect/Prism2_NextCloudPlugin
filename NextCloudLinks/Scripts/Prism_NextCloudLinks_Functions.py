@@ -100,6 +100,10 @@ class Prism_NextCloudLinks_Functions(object):
         if not menu:
             return
         
+        contexts = origin.getCurRenders()
+        if not contexts or not contexts[0].get("path"):
+            return
+        
         path = contexts[0]["path"]
 
         if hasattr(origin, "seq") and len(origin.seq) == 1:
