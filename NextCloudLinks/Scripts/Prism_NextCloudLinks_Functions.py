@@ -48,10 +48,138 @@ class Prism_NextCloudLinks_Functions(object):
     def __init__(self, core, plugin):
         self.core = core
         self.plugin = plugin
+        self.core.registerCallback("projectBrowser_loadUI", self.nextcloudTabLinksEdit, plugin=self)
         self.core.registerCallback("userSettings_loadUI", self.userSettings_Nextcloud, plugin=self)
         self.core.callbacks.registerCallback("openPBListContextMenu", self.nextButton, plugin=self)
         self.core.callbacks.registerCallback("mediaPlayerContextMenuRequested", self.nextButtonPreview, plugin=self)
         self.nextcloud_user, self.nextcloud_password, self.nextcloud_url = self.load_nextcloud_credentials()
+
+    def nextcloudTabLinksEdit(self, projectBrowser):
+
+        class NextcloudTabWidget(QWidget):
+            def __init__(self, plugin, parent=None):
+                super().__init__(parent)
+                self.plugin = plugin
+                self.layout = QVBoxLayout()
+                self.setLayout(self.layout)
+                
+                # Crear tabla
+                self.table = QTableWidget(0, 4)
+                self.table.setHorizontalHeaderLabels(["Ruta", "Enlace", "Permisos", "Expiración"])
+                self.table.verticalHeader().setVisible(False)
+                self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+                self.table.setSelectionBehavior(QTableWidget.SelectRows)
+                self.layout.addWidget(self.table)
+                
+                # Botón de actualizar
+                self.refresh_btn = QPushButton("Actualizar")
+                self.refresh_btn.clicked.connect(self.load_data)
+                self.layout.addWidget(self.refresh_btn)
+                
+            def entered(self, prevTab=None, navData=None):
+                print("Pestaña Nextcloud activada - Cargando enlaces...")
+                self.load_data()
+                
+            def load_data(self):
+                # Limpiar tabla
+                self.table.setRowCount(0)
+                
+                # Obtener datos
+                shares = self.plugin.get_all_project_public_shares()
+                
+                # Llenar tabla
+                for share in shares:
+                    row = self.table.rowCount()
+                    self.table.insertRow(row)
+                    
+                    # Convertir permisos a texto
+                    permissions_value = share.get('permissions', '')
+                    if permissions_value in ['1', '17']:
+                        permissions_text = 'Lectura'
+                    elif permissions_value in ['15', '31']:
+                        permissions_text = 'Lectura/Escritura'
+                    else:
+                        permissions_text = f'Custom ({permissions_value})'
+                    
+                    self.table.setItem(row, 0, QTableWidgetItem(share.get('path', '')))
+                    self.table.setItem(row, 1, QTableWidgetItem(share.get('url', '')))
+                    self.table.setItem(row, 2, QTableWidgetItem(permissions_text))
+                    self.table.setItem(row, 3, QTableWidgetItem(share.get('expiration', '')))
+                
+                self.table.resizeColumnsToContents()
+                
+                # Conectar doble click para copiar URL
+                self.table.doubleClicked.connect(self.copy_selected_link)
+            
+            def copy_selected_link(self, index):
+                if index.column() == 1:  # Columna de URL
+                    url = self.table.item(index.row(), 1).text()
+                    self.parent().plugin.core.copyToClipboard(url, file=False)
+                    self.parent().plugin.core.popup(f"Enlace copiado:\n{url}")
+
+        # Usar la clase personalizada
+        custom_tabNextcloud = NextcloudTabWidget(self)
+        #custom_layout = QVBoxLayout(custom_tabNextcloud)
+        #custom_layout.addWidget(QLabel("Contenido de ejemplo"))
+        
+        #test_button = QPushButton("Ejecutar acción")
+        #test_button.clicked.connect(self.handleCustomAction)
+        #custom_layout.addWidget(test_button)
+        
+        # Añadir la pestaña al proyecto browser
+        custom_tabNextcloud.setProperty("tabType", "custom")
+        projectBrowser.addTab("Nextcloud", custom_tabNextcloud)
+
+    def get_all_project_public_shares(self):
+                remote_root = self.get_remote_root()
+                
+                endpoint = f"{self.nextcloud_url.rstrip('/')}/ocs/v2.php/apps/files_sharing/api/v1/shares"
+                headers = {
+                    "OCS-APIRequest": "true",
+                    "Accept": "application/json"
+                }
+
+                try:
+                    response = requests.get(
+                        endpoint,
+                        headers=headers,
+                        auth=(self.nextcloud_user, self.nextcloud_password),
+                        timeout=30
+                    )
+
+                    if response.status_code != 200:
+                        self.core.writeErrorLog(f"Error getting all shares: HTTP {response.status_code}", response.text)
+                        return []
+
+                    shares = response.json().get('ocs', {}).get('data', [])
+                    project_shares = []
+                    
+                    for share in shares:
+                        share_type = str(share.get('share_type', ''))
+                        if share_type != '3':  # Solo shares públicos
+                            continue
+
+                        share_path = share.get('path', '')
+                        # Filtrar por rutas dentro del proyecto actual
+                        if share_path.startswith(remote_root):
+                            permissions_value = str(share.get('permissions', ''))
+                            expiration = share.get('expiration', '')
+                            if not expiration:
+                                expiration = 'Sin duración limite'
+
+                            project_shares.append({
+                                'url': share.get('url', ''),
+                                'permissions': permissions_value,
+                                'expiration': expiration,
+                                'path': share_path
+                            })
+
+                    return project_shares
+
+                except Exception as e:
+                    self.core.writeErrorLog("Error getting all project public shares", str(e))
+                    return []
+
 
     def showInfoMessage(self, message):
         msg = QMessageBox()
@@ -157,7 +285,7 @@ class Prism_NextCloudLinks_Functions(object):
                 combo.addItems(["solo lectura", "edición"])
                 permisos_combo = combo
             elif label_text == "Duración del link":
-                combo.addItems(["1 mes", "6 meses", "Siempre"])
+                combo.addItems(["1 día", "1 mes", "6 meses", "Siempre"])
                 duracion_combo = combo
             
             # Añadir al layout
@@ -178,12 +306,14 @@ class Prism_NextCloudLinks_Functions(object):
         def on_generate_clicked():
             # Obtener los valores seleccionados
             permisos = permisos_combo.currentText() if permisos_combo else "solo lectura"
-            duracion = duracion_combo.currentText() if duracion_combo else "1 mes"
+            duracion = duracion_combo.currentText() if duracion_combo else "1 día"
 
             # Convertir a valores validos para la api de nextcloud
             permisos_value = "1" if permisos == "solo lectura" else "15"
 
-            if duracion == "1 mes":
+            if duracion == "1 día":
+                expire_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+            elif duracion == "1 mes":
                 expire_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d")
             elif duracion == "6 meses":
                 expire_date = (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d")
