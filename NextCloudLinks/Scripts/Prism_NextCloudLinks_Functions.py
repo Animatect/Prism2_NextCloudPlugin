@@ -40,6 +40,10 @@ import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import json
+import sys
+import base64
+import hashlib
+from itertools import cycle
 
 from PrismUtils.Decorators import err_catcher_plugin as err_catcher
 
@@ -711,6 +715,26 @@ class Prism_NextCloudLinks_Functions(object):
         origin.le_url.setText(url)
 
         pass
+    
+    def encrypt_password(self, text, key):
+        if not text:
+            return ""
+        encrypted_bytes = [ord(c) ^ ord(k) for c, k in zip(text, cycle(key))]
+        return base64.b64encode(bytes(encrypted_bytes)).decode('utf-8')
+    
+    def desencrypt_password(self, encrypted_text, key):
+        if not encrypted_text:
+            return ""
+        try:
+            encrypted_bytes = base64.b64decode(encrypted_text.encode('utf-8'))
+            decrypted_bytes = [b ^ ord(k) for b, k in zip(encrypted_bytes, cycle(key))]
+            return ''.join(chr(b) for b in decrypted_bytes)
+        except:
+            return encrypted_text
+        
+    def get_encryption_key(self):
+        system_info = os.path.join(os.path.expanduser("~"), os.name, sys.platform)
+        return hashlib.sha256(system_info.encode()).hexdigest()[:16]
 
     def save_nextcloud_credentials(self, username, password, url):
         if not all([username, password, url]):
@@ -718,21 +742,26 @@ class Prism_NextCloudLinks_Functions(object):
             return
         
         try:
-            # Determinar la ruta del archivo JSON
-            config_dir = os.path.dirname(os.path.abspath(__file__))
-            os.makedirs(config_dir, exist_ok=True)
-            config_file = os.path.join(config_dir, "nextcloud_credentials.json")
+            encryption_key = self.get_encryption_key()
+            encrypted_password = self.encrypt_password(password, encryption_key)
+            # La ruta del archivo JSON
+            config_file = self.core.getUserPrefConfigPath()
             
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config_data = json.load(f)
+            else:
+                config_data = {}
             # Definir la estructura de datos a guardar
-            credentials = {
+            config_data["Nextcloud_credentials"] = {
                 "nextcloud_username": username,
-                "nextcloud_password": password,
+                "nextcloud_password": encrypted_password,
                 "nextcloud_url": url
             }
 
             # Guardar en archivo JSON
             with open(config_file, 'w') as f:
-                json.dump(credentials, f, indent=4)
+                json.dump(config_data, f, indent=4)
             print("Credentials saved successfully!")
             
             # Actualizar la configuración actual
@@ -740,24 +769,26 @@ class Prism_NextCloudLinks_Functions(object):
             self.nextcloud_password = password
             self.nextcloud_url = url
             
-            self.showInfoMessage("Credentials saved successfully in JSON file!")
         except Exception as e:
             self.showInfoMessage(f"Error saving credentials: {str(e)}")
 
     def load_nextcloud_credentials(self):
         #Función para cargar las credenciales desde el archivo json"
         try:
-            config_dir = os.path.dirname(os.path.abspath(__file__))
-            config_file = os.path.join(config_dir, "nextcloud_credentials.json")
+            config_file = self.core.getUserPrefConfigPath()
             
             if os.path.exists(config_file):
                 with open(config_file, 'r') as f:
-                    credentials = json.load(f)
-                    return (
-                        credentials.get("nextcloud_username", ""),
-                        credentials.get("nextcloud_password", ""),
-                        credentials.get("nextcloud_url", "")
-                    )
+                    config_data = json.load(f)
+                
+                credentials = config_data.get("Nextcloud_credentials", {})
+                username = credentials.get("nextcloud_username", "")
+                encrypted_password = credentials.get("nextcloud_password", "")
+                url = credentials.get("nextcloud_url", "")
+                encryption_key = self.get_encryption_key()
+                password = self.desencrypt_password(encrypted_password, encryption_key)
+                return (username, password, url)
+        
         except Exception as e:
             print(f"Error loading credentials: {str(e)}")
         
