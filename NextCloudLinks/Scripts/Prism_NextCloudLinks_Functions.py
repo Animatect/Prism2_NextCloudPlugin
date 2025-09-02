@@ -79,6 +79,12 @@ class Prism_NextCloudLinks_Functions(object):
                 self.refresh_btn = QPushButton("Actualizar")
                 self.refresh_btn.clicked.connect(self.load_data)
                 self.layout.addWidget(self.refresh_btn)
+
+            def refreshUI(self):
+                self.load_data
+
+            def getSelectedContext(self):
+                return None
                 
             def entered(self, prevTab=None, navData=None):
                 print("Pestaña Nextcloud activada - Cargando enlaces...")
@@ -100,7 +106,7 @@ class Prism_NextCloudLinks_Functions(object):
                     permissions_value = share.get('permissions', '')
                     if permissions_value in ['1', '17']:
                         permissions_text = 'Lectura'
-                    elif permissions_value in ['15', '31']:
+                    elif permissions_value in ['15', '23', '31']:
                         permissions_text = 'Lectura/Escritura'
                     else:
                         permissions_text = f'Custom ({permissions_value})'
@@ -313,7 +319,7 @@ class Prism_NextCloudLinks_Functions(object):
             duracion = duracion_combo.currentText() if duracion_combo else "1 día"
 
             # Convertir a valores validos para la api de nextcloud
-            permisos_value = "1" if permisos == "solo lectura" else "15"
+            permisos_value = "1" if permisos == "solo lectura" else "23"
 
             if duracion == "1 día":
                 expire_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -579,7 +585,7 @@ class Prism_NextCloudLinks_Functions(object):
                 permissions_value = share.get('permissions', '')
                 if permissions_value in ['1', '17']:
                     permissions_text = 'Lectura'
-                elif permissions_value in ['15', '31']:
+                elif permissions_value in ['15', '23', '31']:
                     permissions_text = 'Lectura/Escritura'
                 else:
                     permissions_text = f'Desconocido ({permissions_value})'
