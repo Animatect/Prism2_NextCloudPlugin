@@ -57,6 +57,7 @@ class Prism_NextCloudLinks_Functions(object):
         self.core.callbacks.registerCallback("openPBListContextMenu", self.nextButton, plugin=self)
         self.core.callbacks.registerCallback("mediaPlayerContextMenuRequested", self.nextButtonPreview, plugin=self)
         self.nextcloud_user, self.nextcloud_password, self.nextcloud_url = self.load_nextcloud_credentials()
+        self.core.registerCallback("onMediaBrowserOpen", self.onMediaBrowserOpen, plugin=self)
 
     def nextcloudTabLinksEdit(self, projectBrowser):
 
@@ -189,6 +190,87 @@ class Prism_NextCloudLinks_Functions(object):
                 except Exception as e:
                     self.core.writeErrorLog("Error getting all project public shares", str(e))
                     return []
+                
+
+    def onMediaBrowserOpen(self, mediaBrowser):
+
+        current_file = None
+        try:
+            if hasattr(mediaBrowser, "getCurrentFile"):
+                current_file = mediaBrowser.getCurrentFile()
+                print(f"Archivo actual: {current_file}")
+            elif hasattr(mediaBrowser, "mediaPlayer") and hasattr(mediaBrowser.mediaPlayer, "getCurrentFile"):
+                current_file = mediaBrowser.mediaPlayer.getCurrentFile()
+                print(f"Archivo actual desde mediaPlayer: {current_file}")
+            else:
+                print("No se encontró método para obtener archivo actual")
+        except Exception as e:
+            print(f"Error al obtener archivo actual: {str(e)}")
+
+        # También puedes inspeccionar todos los renders si están disponibles
+        try:
+            if hasattr(mediaBrowser, "getAllRenders"):
+                renders = mediaBrowser.getAllRenders()
+                print("Renders encontrados:")
+                for r in renders:
+                    path = r.get("path", "")
+                    print(f" - {path}")
+            elif hasattr(mediaBrowser, "mediaPlayer") and hasattr(mediaBrowser.mediaPlayer, "getAllRenders"):
+                renders = mediaBrowser.mediaPlayer.getAllRenders()
+                print("Renders desde mediaPlayer:")
+                for r in renders:
+                    path = r.get("path", "")
+                    print(f" - {path}")
+            else:
+                print("No se encontró método para obtener renders")
+        except Exception as e:
+            print(f"Error al obtener renders: {str(e)}")
+        print("Atributos de mediaBrowser:")
+        for attr in dir(mediaBrowser):
+            if not attr.startswith('__'):
+                print(f"  {attr}: {getattr(mediaBrowser, attr)}")
+        print("\nLayouts encontrados:")
+        for child in mediaBrowser.children():
+            if isinstance(child, QLayout):
+                print(f"  {type(child).__name__}: {child}")
+        try:
+            labels = mediaBrowser.findChildren(QLabel)
+            aovs_label = None
+            
+            # Buscar la etiqueta con texto "AOVs:"
+            for label in labels:
+                if label.text() == "AOVs:":
+                    aovs_label = label
+                    break
+            
+            if aovs_label is None:
+                print("No se encontró la etiqueta 'AOVs:'")
+                return
+            
+            # Obtener el layout padre de la etiqueta AOVs
+            parent_layout = aovs_label.parent().layout()
+            
+            if parent_layout is None:
+                print("No se pudo encontrar el layout padre")
+                return
+            
+            # Encontrar el índice de la etiqueta AOVs en el layout
+            index = parent_layout.indexOf(aovs_label)
+            
+            if index == -1:
+                print("No se pudo encontrar el índice de la etiqueta AOVs")
+                return
+            nueva_etiqueta =QPushButton("Nextcloud")
+            #nueva_etiqueta.setAlignment(Qt.AlignCenter)
+            nueva_etiqueta.setStyleSheet("background-color: #2C2C2C; color: #FFFFFF; padding: 5px;")
+            
+            parent_layout.insertWidget(index, nueva_etiqueta)
+
+                
+        except Exception as e:
+            print(f"Error al añadir etiqueta estática: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
 
     def showInfoMessage(self, message):
@@ -282,6 +364,7 @@ class Prism_NextCloudLinks_Functions(object):
         share_menu.addAction(title_action)
         share_menu.addSeparator()
         
+        
         def create_option_widget(label_text):
             nonlocal permisos_combo, duracion_combo
             widget = QWidgetAction(share_menu)
@@ -292,10 +375,10 @@ class Prism_NextCloudLinks_Functions(object):
             # Combo box
             combo = QComboBox()
             if label_text == "Permisos":
-                combo.addItems(["solo lectura", "edición"])
+                combo.addItems(["ONLY READ", "EDIT"])
                 permisos_combo = combo
             elif label_text == "Duración del link":
-                combo.addItems(["1 día", "1 mes", "6 meses", "Siempre"])
+                combo.addItems(["1 DAY", "1 MONTH", "6 MONTHS", "ALWAYS"])
                 duracion_combo = combo
             
             # Añadir al layout
@@ -306,20 +389,20 @@ class Prism_NextCloudLinks_Functions(object):
             return widget
     
         # Añadir opciones al menú
-        share_menu.addAction(create_option_widget("Permisos"))
-        share_menu.addAction(create_option_widget("Duración del link"))
+        share_menu.addAction(create_option_widget("Permissions"))
+        share_menu.addAction(create_option_widget("Link duration"))
         share_menu.addSeparator()
 
         accept_action = QWidgetAction(share_menu)
-        accept_widget = QPushButton("Generar link")
+        accept_widget = QPushButton("Generate link")
 
         def on_generate_clicked():
             # Obtener los valores seleccionados
-            permisos = permisos_combo.currentText() if permisos_combo else "solo lectura"
+            permisos = permisos_combo.currentText() if permisos_combo else "READ ONLY"
             duracion = duracion_combo.currentText() if duracion_combo else "1 día"
 
             # Convertir a valores validos para la api de nextcloud
-            permisos_value = "1" if permisos == "solo lectura" else "23"
+            permisos_value = "1" if permisos == "READ ONLY" else "23"
 
             if duracion == "1 día":
                 expire_date = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -572,7 +655,7 @@ class Prism_NextCloudLinks_Functions(object):
             
             # Creación de tabla
             table = QTableWidget(0, 3)
-            table.setHorizontalHeaderLabels(["Enlace", "Permisos", "Expiración"])
+            table.setHorizontalHeaderLabels(["Link", "Permissions", "Caduce"])
             table.verticalHeader().setVisible(False)
             table.setEditTriggers(QTableWidget.NoEditTriggers)
             
@@ -584,12 +667,12 @@ class Prism_NextCloudLinks_Functions(object):
                 url = share.get('url', '')
                 permissions_value = share.get('permissions', '')
                 if permissions_value in ['1', '17']:
-                    permissions_text = 'Lectura'
+                    permissions_text = 'READ'
                 elif permissions_value in ['15', '23', '31']:
-                    permissions_text = 'Lectura/Escritura'
+                    permissions_text = 'READ/WRITE'
                 else:
                     permissions_text = f'Desconocido ({permissions_value})'
-                expiration = share.get('expiration', 'No expira')
+                expiration = share.get('expiration', 'No caduce')
                 
                 table.setItem(row, 0, QTableWidgetItem(url))
                 table.setItem(row, 1, QTableWidgetItem(permissions_text))
